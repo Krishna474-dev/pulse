@@ -286,3 +286,37 @@ construction. The server action validates with Zod and uses `prisma.customer.cre
 notes: user-supplied `%` and `_` are still ILIKE wildcards, which is a search-behaviour quirk rather
 than a security issue and I left it alone; and the in-process cache keys on the raw search string,
 which was harmless before and remains so now that the string can only ever be a search term.
+
+### D10: responses arriving after a wave closes are stored but never displayed — found, not fixed
+
+**Symptom:** None reported. The webhook accepts a response for a wave, returns `200`, writes the row,
+and the dashboard never shows it. No error anywhere; the data is simply absent from the UI.
+
+**How I found it:** Noticed while fixing D1 that `record()` writes `respondedAt: new Date()` no matter
+which wave the event names, while every read filters on the wave's date window. Confirmed it with the
+rows my own webhook testing had created: Acme's "Q1 2026" wave (1 Jan – 31 Mar 2026) holds **647**
+rows, of which **640** fall inside the window and **7** — stamped today, 16 Aug 2026 — fall after it.
+The dashboard reports 640. The seven are invisible.
+
+**Root cause:** Two different ideas of what a wave contains. `Response.waveId` says a response belongs
+to a wave; the date window says a response belongs to a wave if it arrived between the wave's dates.
+Those agree for seeded data and disagree for anything the webhook writes after a wave has closed — a
+late reply, a provider retry hours later, or a backfill. Where they disagree, the row is stored and
+then filtered out on read.
+
+**Why I have not fixed it:** The correct answer is a product decision, not a code correction, and the
+two available fixes both change behaviour that was not reported as wrong.
+
+- *Drop the date-window filter and rely on `waveId`.* This is the fix I would argue for: the foreign
+  key is the authoritative link, and the window can only ever hide rows that legitimately belong to
+  the wave. But it removes a mechanism from both read paths and makes `waveWindow()` largely
+  redundant, which is a visible redesign of something nobody asked me to redesign.
+- *Clamp `respondedAt` to the wave's end on write.* Small and leaves reads untouched, but it records a
+  time the response did not arrive at. That is patching the symptom and losing real information.
+
+A third option — have the provider supply the response's own timestamp — is the sound long-term answer
+and needs a change to the payload contract, which is outside this exercise.
+
+**How it can be reproduced:** `npm run send:responses -- --wave "Q1 2026"` against any wave whose
+dates are in the past, then compare `SELECT COUNT(*)` for that wave against the figure on
+`/brands/acme`. The counts diverge by the number of events sent.
