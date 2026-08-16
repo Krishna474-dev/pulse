@@ -117,3 +117,36 @@ current time), so it was vulnerable to the same instability even though nobody h
 page loads — a row arriving while a reviewer pages through will shift everything after it. Keyset
 pagination would remove that class of problem, but it changes the URL contract and is beyond this
 ticket. Recorded here as a known limitation rather than silently left.
+
+### D5: the bucket filter navigated with the previously selected value
+
+**Symptom:** Choosing "Detractors" left the table showing everyone; clicking it a second time worked;
+choosing a different bucket was wrong again (PULSE-103).
+
+**How I found it:** Reproduced it in a browser and watched the URL rather than the table. From a
+clean `/brands/acme`, one click on Detractors produced `?bucket=all`; a second click produced
+`?bucket=detractors`. The filtering itself was fine — the component was asking for the wrong bucket.
+That turned it from a query problem into a state problem in one step.
+
+**Root cause:** `BucketFilter` mirrored the current bucket in `useState` and, on click, called
+`setBucket(next)` and then built the URL from `bucket` — the state variable, not the argument.
+`setBucket` schedules a re-render; it does not change the `bucket` binding inside the click handler
+that is already running. So each navigation carried the value selected *before* this click, always
+one selection behind. The second click "worked" only because by then the stale value happened to be
+the one just chosen.
+
+**Fix:** Removed the `useState` mirror entirely and navigate with `next`, highlighting the active
+button from the `current` prop. The URL is already this app's state store — the server component
+parses `searchParams` and passes the result down — so a local copy was a second source of truth with
+nothing to keep it honest.
+
+**How I verified it:** In the browser from a clean URL: one click on Detractors now gives
+`?bucket=detractors` and all 15 rows score ≤ 6. Switching straight to Promoters gives
+`?bucket=promoters`, all rows ≥ 9, and the correct button highlighted — the third reported symptom.
+
+**Blast radius:** Checked every other client component for the same pattern. `Pagination` and
+`WaveSelect` hold no local state and use their arguments directly. `SearchBox` does keep `useState`,
+but that is a controlled text input where local state is the right thing, and it reads `value` — the
+current value — when it navigates, not a stale copy. `FeedbackTable` builds plain links. So the
+defect was confined to this one component, but the pattern that caused it — mirroring URL state in
+`useState` — is worth avoiding everywhere.
