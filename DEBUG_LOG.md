@@ -211,3 +211,40 @@ appear elsewhere — `addCustomer` already relies on its `@@unique([brandId, pho
 catches `P2002`, which is the pattern this fix now matches. Adding the index required the existing
 data to satisfy it; the duplicate rows left by my earlier reproduction had to be cleared first, which
 `npm run db:reset` did.
+
+### D8: the brand list issued one query per customer
+
+**Symptom:** `/brands` took over a second with only two brands (PULSE-104). On this machine it was
+7.8–9.0 seconds.
+
+**How I found it:** Measured rather than guessed. Timed the page over several loads, then counted the
+work by reading `xact_commit` from `pg_stat_database` before and after a request: **1,748 queries for
+one page load**. With two brands of 1,000 customers each, the size of that number pointed straight at
+a per-customer query.
+
+**Root cause:** `BrandService.listWithStats()` looped over each brand, loaded that brand's customers,
+then ran `prisma.response.count()` **once per customer** to decide whether that customer had ever
+responded. A classic N+1: the number of queries scaled with the number of customers, so the page's
+cost was a property of the data rather than of the question being asked. Each brand also issued its
+own waves and customers queries inside the same sequential loop.
+
+**Fix:** Fetch each aggregate for all brands in one round and assemble in memory. Waves come from a
+single `findMany` grouped by brand id in a `Map`; customer totals and "has ever responded" totals come
+from two `groupBy` queries, the second using `responses: { some: {} }` so the database performs one
+`EXISTS` test per customer internally instead of a thousand separate counts. The per-brand work then
+runs concurrently rather than in sequence.
+
+**How I verified it:** Same measurement method as the diagnosis. One page load fell from 1,748
+queries to **5.6** (averaged over five loads, because a single load gave a misleading zero once), and
+warm response time from 7.8–9.0 s to **173–192 ms**. The rendered figures are unchanged — Acme `-49`
+/ 300 / 959-of-1000, Northwind `6` / 610 / 933-of-1000 — so this is the same answer computed
+differently, which is the part that matters.
+
+**Blast radius:** Checked the other services for queries inside loops. `ResponseService` and
+`WaveService` issue a fixed number of queries regardless of data size, and the brand dashboard does
+not loop. This was the only N+1. The page is now `4 + brands` queries instead of
+`2 + brands × (3 + customers)`: at 200 brands of 1,000 customers that is roughly 204 rather than
+roughly 200,000. The remaining per-brand query is `getSummary()` for the latest wave. Folding those
+into one grouped query is possible but would mean computing NPS in SQL and duplicating the bucket
+boundaries that `docs/decisions.md` deliberately keeps in one place, so I left it and note it here as
+the next step if brand counts ever grow that far.
