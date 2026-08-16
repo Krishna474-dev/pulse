@@ -61,3 +61,27 @@ for the brand list, so both were wrong in the same way and both are fixed. Remov
 `loadWaveFeedback()` unreachable, so it is deleted — it also wrapped its query in a
 `catch { return [] }`, which would have turned any database error into a silent "no feedback yet"
 rather than a failure anyone could see. Deleting it removes that trap with it.
+
+### D3: NPS was truncated instead of rounded
+
+**Symptom:** Same ticket (PULSE-101) — the score sat up to a point away from a hand calculation,
+always toward zero.
+
+**How I found it:** After D2 the arithmetic still disagreed with SQL: Acme Flash Feb 2026 computes to
+−48.667 but displayed −48. Read `summarise()` to see how the float became an integer.
+
+**Root cause:** `summarise()` produced the integer with `parseInt(String(promoterShare -
+detractorShare), 10)`. `parseInt` reads leading digits off a string and discards the rest, so it
+truncates toward zero rather than rounding: `-48.667` became `-48`, and `12.7` would become `12`.
+The error is always under one point, which is exactly why the report said "close, but not the same".
+
+**Fix:** `Math.round(promoterShare - detractorShare)`, which is what turning a percentage difference
+into a whole-number score means.
+
+**How I verified it:** Acme Flash Feb 2026 now shows `-49`, matching `ROUND(-48.667)` from SQL.
+Northwind stays `6` (6.066 rounds and truncates alike) — a control confirming the change moves only
+values that should move.
+
+**Blast radius:** Grepped for other numeric conversions. `percentage()` in the same file already used
+`Math.round`, and `Pagination` uses `Math.ceil` correctly for a page count. The only other `parseInt`
+parses the page number from the URL, which is appropriate for an integer string.
