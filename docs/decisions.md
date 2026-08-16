@@ -55,6 +55,25 @@ raw-SQL path the direction is composed as a SQL fragment rather than a bound par
 sort direction is syntax rather than a value — it is safe only because `dir` is a validated union and
 never raw user text.
 
+## "Non-rated" means never rated, not "not in this wave"
+
+The non-rated customers section lists customers with no responses **at all**, not customers missing
+from the currently selected wave. "Not rated yet" reads as never, it matches the `activeCustomers`
+figure already shown on the brand list, and it produces a follow-up list worth acting on (tens of
+people) rather than one dominated by everyone who simply was not surveyed in the chosen wave
+(hundreds). Switching to wave-scoped would mean changing the `responses: { none: {} }` filter to one
+that also constrains `waveId`.
+
+The section is deliberately independent of the comment filters. Bucket, search, flag and sort belong
+to the feedback table; applying them to a list of people who left no feedback would be meaningless.
+It pages on its own `cpage` parameter and searches on its own `cq` parameter, so the two lists never
+disturb each other.
+
+Its search matches name **or** phone. Names match case-insensitively; phone input has spacing,
+brackets, dashes and a leading `+` stripped before matching, because numbers are stored as
+`+<digits>` and a reviewer reading a number aloud will type it spaced. Searching resets `cpage` to 1
+so results are never hidden behind a stale page number.
+
 ## Writes clear the search cache
 
 `src/lib/cache.ts` memoises search result pages for 60 seconds. Flagging a row changes what those

@@ -107,7 +107,7 @@ export class ResponseService {
           AND r.verbatim IS NOT NULL
           AND r."respondedAt" >= ${start}
           AND r."respondedAt" <= ${end}
-          AND r.verbatim ILIKE ${`%${search}%`}
+          AND (r.verbatim ILIKE ${`%${search}%`} OR c.name ILIKE ${`%${search}%`})
           ${scoreSql(bucket)}
           ${flaggedOnly ? Prisma.sql`AND r."flaggedAt" IS NOT NULL` : Prisma.empty}
       `;

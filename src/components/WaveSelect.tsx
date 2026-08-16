@@ -15,16 +15,16 @@ export function WaveSelect({ waves, currentId }: { waves: WaveOption[]; currentI
     const params = new URLSearchParams(searchParams.toString());
     params.set("wave", waveId);
     params.set("page", "1");
-    router.push(`?${params.toString()}`);
+    router.push(`?${params.toString()}`, { scroll: false });
   };
 
   return (
     <label className="flex items-center gap-2 text-sm text-slate-600">
-      <span>Wave</span>
+      <span className="section-title">Wave</span>
       <select
         value={currentId}
         onChange={(event) => onChange(event.target.value)}
-        className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-900"
+        className="input w-auto cursor-pointer py-1.5 font-medium"
       >
         {waves.map((wave) => (
           <option key={wave.id} value={wave.id}>

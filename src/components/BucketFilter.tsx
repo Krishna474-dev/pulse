@@ -20,19 +20,22 @@ export function BucketFilter({ current }: { current: Bucket }) {
     const params = new URLSearchParams(searchParams.toString());
     params.set("bucket", next);
     params.set("page", "1");
-    router.push(`?${params.toString()}`);
+    router.push(`?${params.toString()}`, { scroll: false });
   };
 
   return (
-    <div className="inline-flex rounded-md border border-slate-200 bg-white p-1">
+    <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1 shadow-card">
       {BUCKETS.map((option) => (
         <button
           key={option}
           type="button"
           onClick={() => onSelect(option)}
+          aria-pressed={current === option}
           className={cx(
-            "rounded px-3 py-1.5 text-sm transition-colors",
-            current === option ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100",
+            "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+            current === option
+              ? "bg-brand-600 text-white shadow-card"
+              : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
           )}
         >
           {LABELS[option]}

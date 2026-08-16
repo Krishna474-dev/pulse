@@ -32,9 +32,13 @@ function SortLink({
   return (
     <Link
       href={`?${params.toString()}`}
+      scroll={false}
       aria-sort={active ? (currentDir === "asc" ? "ascending" : "descending") : "none"}
       title={`Sort by ${label.toLowerCase()}, ${nextDir === "asc" ? "ascending" : "descending"}`}
-      className={cx("hover:text-slate-900", active ? "text-slate-900 underline" : "text-slate-500")}
+      className={cx(
+        "inline-flex items-center transition-colors hover:text-brand-700",
+        active ? "text-brand-700" : "text-slate-500",
+      )}
     >
       {label}
       <span aria-hidden className="ml-1 tabular-nums">
@@ -59,15 +63,20 @@ export function FeedbackTable({
 }) {
   if (rows.length === 0) {
     return (
-      <div className="px-4 py-10 text-center text-sm text-slate-500">
-        No comments match these filters.
+      <div className="flex flex-col items-center px-4 py-16 text-center">
+        <div className="grid h-12 w-12 place-items-center rounded-full bg-slate-100 text-xl text-slate-400">
+          ⌕
+        </div>
+        <p className="mt-3 text-sm font-medium text-slate-700">No comments match these filters</p>
+        <p className="mt-1 text-sm text-slate-500">Try clearing the search or choosing All.</p>
       </div>
     );
   }
 
   return (
-    <table className="w-full text-left text-sm">
-      <thead className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-500">
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[46rem] text-left text-sm">
+      <thead className="border-b border-slate-200/80 bg-slate-50/60 section-title">
         <tr>
           <th className="px-4 py-3 font-medium">Customer</th>
           <th className="px-4 py-3 font-medium">
@@ -92,17 +101,25 @@ export function FeedbackTable({
           <th className="px-4 py-3 font-medium">Follow-up</th>
         </tr>
       </thead>
-      <tbody>
+      <tbody className="divide-y divide-slate-100">
         {rows.map((row) => {
           const bucket = bucketForScore(row.score);
 
           return (
-            <tr key={row.id} className="border-b border-slate-50 last:border-0 align-top">
-              <td className="px-4 py-3 whitespace-nowrap text-slate-700">{row.customerName}</td>
+            <tr
+              key={row.id}
+              className={cx(
+                "align-top transition-colors hover:bg-slate-50/70",
+                row.flaggedAt && "bg-amber-50/40",
+              )}
+            >
+              <td className="px-4 py-3 whitespace-nowrap font-medium text-slate-700">
+                {row.customerName}
+              </td>
               <td className="px-4 py-3">
                 <span
                   className={cx(
-                    "inline-flex h-6 w-6 items-center justify-center rounded text-xs font-semibold tabular-nums",
+                    "inline-flex h-7 w-7 items-center justify-center rounded-lg text-xs font-semibold tabular-nums",
                     TONE[bucket],
                   )}
                 >
@@ -124,6 +141,7 @@ export function FeedbackTable({
           );
         })}
       </tbody>
-    </table>
+      </table>
+    </div>
   );
 }

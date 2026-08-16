@@ -1,9 +1,12 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { AddCustomerForm } from "@/components/AddCustomerForm";
+import { ChevronRight } from "@/components/ChevronRight";
 import { BucketFilter } from "@/components/BucketFilter";
 import { FeedbackTable } from "@/components/FeedbackTable";
 import { FlaggedFilter } from "@/components/FlaggedFilter";
+import { NonRatedCustomers } from "@/components/NonRatedCustomers";
 import { Pagination } from "@/components/Pagination";
 import { ScoreCard } from "@/components/ScoreCard";
 import { SearchBox } from "@/components/SearchBox";
@@ -11,12 +14,14 @@ import { WaveSelect } from "@/components/WaveSelect";
 import { formatDate } from "@/lib/format";
 import { isBucket } from "@/lib/nps";
 import { BrandService } from "@/services/brand.service";
+import { CustomerService } from "@/services/customer.service";
 import { ResponseService, type SortDir, type SortKey } from "@/services/response.service";
 import { WaveService } from "@/services/wave.service";
 
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 15;
+const CUSTOMER_PAGE_SIZE = 10;
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -42,8 +47,14 @@ export default async function BrandDetailPage({
 
   if (waves.length === 0) {
     return (
-      <div className="rounded-lg border border-slate-200 bg-white p-10 text-center text-slate-600">
-        {brand.name} has no waves yet.
+      <div className="card p-12 text-center">
+        <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-slate-100 text-xl text-slate-400">
+          ◔
+        </div>
+        <h2 className="mt-4 text-base font-semibold text-slate-900">No waves yet</h2>
+        <p className="mt-1 text-sm text-slate-600">
+          {brand.name} has no survey waves to report on.
+        </p>
       </div>
     );
   }
@@ -58,6 +69,8 @@ export default async function BrandDetailPage({
   const dir: SortDir = readParam(query, "dir") === "asc" ? "asc" : "desc";
   const page = Math.max(1, Number.parseInt(readParam(query, "page") ?? "1", 10) || 1);
   const flaggedOnly = readParam(query, "flagged") === "1";
+  const customerPage = Math.max(1, Number.parseInt(readParam(query, "cpage") ?? "1", 10) || 1);
+  const customerSearch = readParam(query, "cq") ?? "";
 
   const summary = await ResponseService.getSummary(wave);
   const { rows, total } = await ResponseService.listFeedback({
@@ -71,16 +84,36 @@ export default async function BrandDetailPage({
     flaggedOnly,
   });
 
+  const nonRated = await CustomerService.listWithoutResponses(brand.id, {
+    page: customerPage,
+    pageSize: CUSTOMER_PAGE_SIZE,
+    search: customerSearch,
+  });
+
   const linkQuery: Record<string, string> = { wave: wave.id, bucket, q: search };
   if (flaggedOnly) linkQuery.flagged = "1";
 
   return (
-    <div className="space-y-6">
+    <div className="animate-fade-in space-y-6">
+      <nav aria-label="Breadcrumb" className="flex items-center gap-1 text-sm">
+        <Link
+          href="/brands"
+          className="rounded px-1 py-0.5 font-medium text-slate-500 transition-colors hover:text-brand-700"
+        >
+          Brands
+        </Link>
+        <ChevronRight />
+        <span className="px-1 font-medium text-slate-900" aria-current="page">
+          {brand.name}
+        </span>
+      </nav>
+
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{brand.name}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{brand.name}</h1>
           <p className="mt-1 text-sm text-slate-600">
-            {wave.label} · {formatDate(wave.startDate)} – {formatDate(wave.endDate)}
+            <span className="font-medium text-slate-700">{wave.label}</span> ·{" "}
+            {formatDate(wave.startDate)} – {formatDate(wave.endDate)}
           </p>
         </div>
 
@@ -105,7 +138,7 @@ export default async function BrandDetailPage({
         <SearchBox current={search} />
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <div className="card overflow-hidden">
         <FeedbackTable
           rows={rows}
           sort={sort}
@@ -113,8 +146,16 @@ export default async function BrandDetailPage({
           query={linkQuery}
           brandSlug={brand.slug}
         />
-        <Pagination page={page} pageSize={PAGE_SIZE} total={total} />
+        <Pagination page={page} pageSize={PAGE_SIZE} total={total} label="comments" />
       </div>
+
+      <NonRatedCustomers
+        rows={nonRated.rows}
+        total={nonRated.total}
+        page={customerPage}
+        pageSize={CUSTOMER_PAGE_SIZE}
+        search={customerSearch}
+      />
     </div>
   );
 }
