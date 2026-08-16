@@ -1,8 +1,9 @@
 import Link from "next/link";
 
+import { FlagButton } from "@/components/FlagButton";
 import { formatDateTime, cx } from "@/lib/format";
 import { bucketForScore } from "@/lib/nps";
-import type { FeedbackRow, SortKey } from "@/services/response.service";
+import type { FeedbackRow, SortDir, SortKey } from "@/services/response.service";
 
 const TONE: Record<string, string> = {
   promoter: "bg-emerald-50 text-emerald-700",
@@ -14,24 +15,31 @@ function SortLink({
   label,
   sortKey,
   currentSort,
+  currentDir,
   query,
 }: {
   label: string;
   sortKey: SortKey;
   currentSort: SortKey;
+  currentDir: SortDir;
   query: Record<string, string>;
 }) {
-  const params = new URLSearchParams({ ...query, sort: sortKey, page: "1" });
+  const active = currentSort === sortKey;
+  // Clicking the active column flips it; clicking the other starts at descending.
+  const nextDir: SortDir = active && currentDir === "desc" ? "asc" : "desc";
+  const params = new URLSearchParams({ ...query, sort: sortKey, dir: nextDir, page: "1" });
 
   return (
     <Link
       href={`?${params.toString()}`}
-      className={cx(
-        "hover:text-slate-900",
-        currentSort === sortKey ? "text-slate-900 underline" : "text-slate-500",
-      )}
+      aria-sort={active ? (currentDir === "asc" ? "ascending" : "descending") : "none"}
+      title={`Sort by ${label.toLowerCase()}, ${nextDir === "asc" ? "ascending" : "descending"}`}
+      className={cx("hover:text-slate-900", active ? "text-slate-900 underline" : "text-slate-500")}
     >
       {label}
+      <span aria-hidden className="ml-1 tabular-nums">
+        {active ? (currentDir === "asc" ? "↑" : "↓") : "↕"}
+      </span>
     </Link>
   );
 }
@@ -39,11 +47,15 @@ function SortLink({
 export function FeedbackTable({
   rows,
   sort,
+  dir,
   query,
+  brandSlug,
 }: {
   rows: FeedbackRow[];
   sort: SortKey;
+  dir: SortDir;
   query: Record<string, string>;
+  brandSlug: string;
 }) {
   if (rows.length === 0) {
     return (
@@ -59,12 +71,25 @@ export function FeedbackTable({
         <tr>
           <th className="px-4 py-3 font-medium">Customer</th>
           <th className="px-4 py-3 font-medium">
-            <SortLink label="Score" sortKey="score" currentSort={sort} query={query} />
+            <SortLink
+              label="Score"
+              sortKey="score"
+              currentSort={sort}
+              currentDir={dir}
+              query={query}
+            />
           </th>
           <th className="px-4 py-3 font-medium">Comment</th>
           <th className="px-4 py-3 font-medium">
-            <SortLink label="Received" sortKey="date" currentSort={sort} query={query} />
+            <SortLink
+              label="Received"
+              sortKey="date"
+              currentSort={sort}
+              currentDir={dir}
+              query={query}
+            />
           </th>
+          <th className="px-4 py-3 font-medium">Follow-up</th>
         </tr>
       </thead>
       <tbody>
@@ -87,6 +112,13 @@ export function FeedbackTable({
               <td className="px-4 py-3 text-slate-700">{row.verbatim}</td>
               <td className="px-4 py-3 whitespace-nowrap text-slate-500">
                 {formatDateTime(row.respondedAt)}
+              </td>
+              <td className="px-4 py-3">
+                <FlagButton
+                  responseId={row.id}
+                  brandSlug={brandSlug}
+                  flagged={Boolean(row.flaggedAt)}
+                />
               </td>
             </tr>
           );

@@ -26,3 +26,8 @@ export function getCached<T>(key: string): T | undefined {
 export function setCached<T>(key: string, value: T): void {
   store.set(key, { value, expiresAt: Date.now() + TTL_MS });
 }
+
+/** Called after a write, so cached search pages cannot outlive the data they hold. */
+export function clearCached(): void {
+  store.clear();
+}

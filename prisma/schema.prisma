@@ -54,6 +54,8 @@ model Response {
   verbatim    String?
   /// Provider-supplied de-duplication key. Null for responses captured in-app.
   eventId     String?  @unique
+  /// When a reviewer flagged this for follow-up. Null means not flagged.
+  flaggedAt   DateTime?
   respondedAt DateTime @default(now())
   createdAt   DateTime @default(now())
 

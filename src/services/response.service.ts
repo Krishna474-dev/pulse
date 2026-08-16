@@ -1,6 +1,6 @@
 import { Prisma, type Wave } from "@prisma/client";
 
-import { getCached, setCached } from "@/lib/cache";
+import { clearCached, getCached, setCached } from "@/lib/cache";
 import { summarise, type Bucket, type Summary } from "@/lib/nps";
 import { prisma } from "@/lib/prisma";
 import { waveWindow } from "@/services/wave.service";
@@ -10,6 +10,7 @@ export type FeedbackRow = {
   score: number;
   verbatim: string | null;
   respondedAt: Date;
+  flaggedAt: Date | null;
   customerName: string;
 };
 
@@ -20,6 +21,8 @@ export type FeedbackPage = {
 
 export type SortKey = "score" | "date";
 
+export type SortDir = "asc" | "desc";
+
 export type ListFeedbackParams = {
   wave: Wave;
   bucket: Bucket;
@@ -27,6 +30,8 @@ export type ListFeedbackParams = {
   page: number;
   pageSize: number;
   sort: SortKey;
+  dir: SortDir;
+  flaggedOnly: boolean;
 };
 
 export type IncomingResponse = {
@@ -88,12 +93,12 @@ export class ResponseService {
    * rows that tie on the sort column.
    */
   static async listFeedback(params: ListFeedbackParams): Promise<FeedbackPage> {
-    const { wave, bucket, search, page, pageSize, sort } = params;
+    const { wave, bucket, search, page, pageSize, sort, dir, flaggedOnly } = params;
     const { start, end } = waveWindow(wave);
     const offset = (page - 1) * pageSize;
 
     if (search.trim().length > 0) {
-      const cacheKey = `${wave.id}|${bucket}|${sort}|${page}|${search}`;
+      const cacheKey = `${wave.id}|${bucket}|${sort}|${dir}|${page}|${search}|${flaggedOnly}`;
       const cached = getCached<FeedbackPage>(cacheKey);
       if (cached) return cached;
 
@@ -104,13 +109,19 @@ export class ResponseService {
           AND r."respondedAt" <= ${end}
           AND r.verbatim ILIKE ${`%${search}%`}
           ${scoreSql(bucket)}
+          ${flaggedOnly ? Prisma.sql`AND r."flaggedAt" IS NOT NULL` : Prisma.empty}
       `;
 
+      // Direction is syntax, not a value, so it cannot be a bound parameter. It is
+      // safe here because `dir` is a validated union, never raw user text.
+      const direction = dir === "asc" ? Prisma.sql`ASC` : Prisma.sql`DESC`;
       const orderBy =
-        sort === "score" ? Prisma.sql`r.score DESC` : Prisma.sql`r."respondedAt" DESC`;
+        sort === "score"
+          ? Prisma.sql`r.score ${direction}`
+          : Prisma.sql`r."respondedAt" ${direction}`;
 
       const rows = await prisma.$queryRaw<FeedbackRow[]>`
-        SELECT r.id, r.score, r.verbatim, r."respondedAt", c.name AS "customerName"
+        SELECT r.id, r.score, r.verbatim, r."respondedAt", r."flaggedAt", c.name AS "customerName"
         FROM "Response" r
         JOIN "Customer" c ON c.id = r."customerId"
         ${where}
@@ -135,13 +146,14 @@ export class ResponseService {
       verbatim: { not: null },
       respondedAt: { gte: start, lte: end },
       score: scoreFilter(bucket),
+      flaggedAt: flaggedOnly ? { not: null } : undefined,
     };
 
     const [rows, total] = await Promise.all([
       prisma.response.findMany({
         where,
         include: { customer: { select: { name: true } } },
-        orderBy: [sort === "score" ? { score: "desc" } : { respondedAt: "desc" }, { id: "asc" }],
+        orderBy: [sort === "score" ? { score: dir } : { respondedAt: dir }, { id: "asc" }],
         skip: offset,
         take: pageSize,
       }),
@@ -154,10 +166,27 @@ export class ResponseService {
         score: row.score,
         verbatim: row.verbatim,
         respondedAt: row.respondedAt,
+        flaggedAt: row.flaggedAt,
         customerName: row.customer.name,
       })),
       total,
     };
+  }
+
+  /**
+   * Mark or unmark a response for follow-up. Returns false when the id matches
+   * nothing, so the caller can tell a stale row from a successful write.
+   */
+  static async setFlag(responseId: string, flagged: boolean): Promise<boolean> {
+    const updated = await prisma.response.updateMany({
+      where: { id: responseId },
+      data: { flaggedAt: flagged ? new Date() : null },
+    });
+
+    if (updated.count === 0) return false;
+
+    clearCached();
+    return true;
   }
 
   /**
