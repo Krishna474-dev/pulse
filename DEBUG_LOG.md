@@ -85,3 +85,35 @@ values that should move.
 **Blast radius:** Grepped for other numeric conversions. `percentage()` in the same file already used
 `Math.round`, and `Pagination` uses `Math.ceil` correctly for a page count. The only other `parseInt`
 parses the page number from the URL, which is appropriate for an integer string.
+
+### D4: the feedback table paged with an unstable sort, repeating some rows and hiding others
+
+**Symptom:** A row seen on page 1 appeared again on page 2 (PULSE-102).
+
+**How I found it:** Ran the app's own page-1 and page-2 queries in SQL and intersected the ids — two
+rows were in both. Then walked all twelve pages of the wave: 179 rows fetched but only **169
+distinct**, so ten rows were shown twice and ten were never shown at all. The duplicate was the
+visible half of the problem; the silently missing rows were the worse half.
+
+**Root cause:** The table ordered by `score DESC` alone. The wave holds 179 rows across only 11
+distinct scores, so almost every row ties with many others. SQL guarantees no particular order among
+rows that tie, and each page is a separate query that sorts independently before applying
+`LIMIT`/`OFFSET`. Tied rows can therefore be arranged differently for page 1 than for page 2, and
+slicing two different arrangements at offsets 0 and 15 both repeats and skips rows.
+
+**Fix:** Appended a unique tiebreaker — `id` — to the ordering in both query paths, so the sort is
+total rather than partial and every page slices the same sequence.
+
+**How I verified it:** Repeated the twelve-page walk: 179 rows seen, 179 distinct. In the running app
+pages 1 and 2 now share no rows. The same walk without the tiebreaker still returns 169 distinct, so
+the difference is the fix rather than luck.
+
+**Blast radius:** Both branches of `listFeedback()` had the same defect — the Prisma query and the
+raw-SQL search query — and both are fixed. The date ordering got the tiebreaker too: `respondedAt`
+can tie (it is written to millisecond precision, and inbound webhook rows are stamped with the
+current time), so it was vulnerable to the same instability even though nobody had reported it.
+
+**Related, not fixed:** `OFFSET` paging is still vulnerable to rows being inserted or deleted between
+page loads — a row arriving while a reviewer pages through will shift everything after it. Keyset
+pagination would remove that class of problem, but it changes the URL contract and is beyond this
+ticket. Recorded here as a known limitation rather than silently left.
