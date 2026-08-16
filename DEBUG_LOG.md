@@ -248,3 +248,41 @@ roughly 200,000. The remaining per-brand query is `getSummary()` for the latest 
 into one grouped query is possible but would mean computing NPS in SQL and duplicating the bucket
 boundaries that `docs/decisions.md` deliberately keeps in one place, so I left it and note it here as
 the next step if brand counts ever grow that far.
+
+### D9: the comment search was open to SQL injection (no ticket — PULSE-107)
+
+**Symptom:** None reported, which is what makes it the unticketed one. The search box works, so
+nothing looks wrong. The damage is only visible if someone types something other than a search term.
+
+**How I found it:** Not from a symptom — from reading the two code paths in `listFeedback()`. The
+search branch builds its query as a template string and hands it to `$queryRawUnsafe`, with the
+user's `q` parameter concatenated straight into an `ILIKE`. Probed it from the URL to check the
+suspicion was real rather than theoretical: searching for `o'brien` returned **500**, because the
+apostrophe closed the string literal and left the database parsing broken SQL. Searching
+`zzz_no_such_text_zzz%' OR '1'='1' --` returned **3,907 rows** where the same term without the suffix
+returned 0. 3,907 is every response in the database — both brands, all seven waves.
+
+**Root cause:** `$queryRawUnsafe` sends the string it is given, so anything interpolated becomes part
+of the statement rather than a value in it. Once the input can close a quote, the rest of the `WHERE`
+clause is under the caller's control: `--` comments out the trailing fragment and the wave, brand and
+date conditions stop applying. The database has no way to tell data from code once they arrive in the
+same string — that separation has to happen before the query is sent.
+
+**Fix:** Rebuilt both queries with `Prisma.sql` tagged templates and `$queryRaw`, so values travel as
+bound parameters and are never parsed as SQL. `scoreSql()` now returns `Prisma.Sql` fragments
+(`Prisma.empty` for "all") rather than strings, so composition stays type-safe. `ORDER BY` cannot be
+a bound parameter because a column name is an identifier, not a value — it is built from the `sort`
+union type, which the page validates before it reaches the service, so no user text is involved.
+
+**How I verified it:** Ordinary search still works — "delivery" returns 8 rows. `o'brien` now returns
+200 with 0 matches instead of a 500: the apostrophe is treated as text, which is what a user typing an
+Irish surname would expect. Both injection payloads return 0 rows, matching nothing because they are
+now searched for literally. And the bucket fragment still composes correctly: for the term "the",
+detractors 52 + promoters 10 + passives 19 = 81 = all, so the parts still partition the whole.
+
+**Blast radius:** Grepped for raw SQL across the repo — this was the only place, and both statements
+in it are fixed. Everything else goes through the Prisma query API, which parameterises by
+construction. The server action validates with Zod and uses `prisma.customer.create`. Two related
+notes: user-supplied `%` and `_` are still ILIKE wildcards, which is a search-behaviour quirk rather
+than a security issue and I left it alone; and the in-process cache keys on the raw search string,
+which was harmless before and remains so now that the string can only ever be a search term.

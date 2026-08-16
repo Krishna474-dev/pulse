@@ -51,16 +51,16 @@ function scoreFilter(bucket: Bucket) {
   }
 }
 
-function scoreSql(bucket: Bucket): string {
+function scoreSql(bucket: Bucket): Prisma.Sql {
   switch (bucket) {
     case "promoters":
-      return "AND r.score >= 9";
+      return Prisma.sql`AND r.score >= 9`;
     case "passives":
-      return "AND r.score BETWEEN 7 AND 8";
+      return Prisma.sql`AND r.score BETWEEN 7 AND 8`;
     case "detractors":
-      return "AND r.score <= 6";
+      return Prisma.sql`AND r.score <= 6`;
     default:
-      return "";
+      return Prisma.empty;
   }
 }
 
@@ -97,30 +97,33 @@ export class ResponseService {
       const cached = getCached<FeedbackPage>(cacheKey);
       if (cached) return cached;
 
-      const where = `
-        WHERE r."waveId" = '${wave.id}'
+      const where = Prisma.sql`
+        WHERE r."waveId" = ${wave.id}
           AND r.verbatim IS NOT NULL
-          AND r."respondedAt" >= '${start.toISOString()}'
-          AND r."respondedAt" <= '${end.toISOString()}'
-          AND r.verbatim ILIKE '%${search}%'
+          AND r."respondedAt" >= ${start}
+          AND r."respondedAt" <= ${end}
+          AND r.verbatim ILIKE ${`%${search}%`}
           ${scoreSql(bucket)}
       `;
 
-      const rows = await prisma.$queryRawUnsafe<FeedbackRow[]>(`
+      const orderBy =
+        sort === "score" ? Prisma.sql`r.score DESC` : Prisma.sql`r."respondedAt" DESC`;
+
+      const rows = await prisma.$queryRaw<FeedbackRow[]>`
         SELECT r.id, r.score, r.verbatim, r."respondedAt", c.name AS "customerName"
         FROM "Response" r
         JOIN "Customer" c ON c.id = r."customerId"
         ${where}
-        ORDER BY ${sort === "score" ? 'r.score DESC' : 'r."respondedAt" DESC'}, r.id ASC
+        ORDER BY ${orderBy}, r.id ASC
         LIMIT ${pageSize} OFFSET ${offset}
-      `);
+      `;
 
-      const counted = await prisma.$queryRawUnsafe<{ count: number }[]>(`
+      const counted = await prisma.$queryRaw<{ count: number }[]>`
         SELECT COUNT(*)::int AS count
         FROM "Response" r
         JOIN "Customer" c ON c.id = r."customerId"
         ${where}
-      `);
+      `;
 
       const result: FeedbackPage = { rows, total: counted[0]?.count ?? 0 };
       setCached(cacheKey, result);
