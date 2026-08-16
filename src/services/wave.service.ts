@@ -7,13 +7,15 @@ export type WaveWindow = { start: Date; end: Date };
 /**
  * The instant range a wave covers. `startDate`/`endDate` are stored as calendar
  * dates, so they need widening to cover the whole of the first and last day.
+ * Widened in UTC: Prisma reads `@db.Date` as midnight UTC and `respondedAt` is
+ * compared in UTC, so local-time setters would shift the window.
  */
 export function waveWindow(wave: Pick<Wave, "startDate" | "endDate">): WaveWindow {
   const start = new Date(wave.startDate);
-  start.setHours(0, 0, 0, 0);
+  start.setUTCHours(0, 0, 0, 0);
 
   const end = new Date(wave.endDate);
-  end.setHours(23, 59, 59, 999);
+  end.setUTCHours(23, 59, 59, 999);
 
   return { start, end };
 }
