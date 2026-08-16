@@ -1,7 +1,7 @@
 import type { Wave } from "@prisma/client";
 
 import { getCached, setCached } from "@/lib/cache";
-import { EMPTY_SUMMARY, summarise, type Bucket, type Summary } from "@/lib/nps";
+import { summarise, type Bucket, type Summary } from "@/lib/nps";
 import { prisma } from "@/lib/prisma";
 import { waveWindow } from "@/services/wave.service";
 
@@ -66,37 +66,19 @@ function scoreSql(bucket: Bucket): string {
 
 export class ResponseService {
   /**
-   * Every response in the wave that carries a written comment.
+   * Scored on every response in the wave, including the score-only ones. The
+   * comments table filters to responses with a verbatim; the headline must not.
    */
-  static async loadWaveFeedback(wave: Wave): Promise<FeedbackRow[]> {
+  static async getSummary(wave: Wave): Promise<Summary> {
     const { start, end } = waveWindow(wave);
 
-    try {
-      const rows = await prisma.response.findMany({
-        where: {
-          waveId: wave.id,
-          verbatim: { not: null },
-          respondedAt: { gte: start, lte: end },
-        },
-        include: { customer: { select: { name: true } } },
-        orderBy: { respondedAt: "desc" },
-      });
-
-      return rows.map((row) => ({
-        id: row.id,
-        score: row.score,
-        verbatim: row.verbatim,
-        respondedAt: row.respondedAt,
-        customerName: row.customer.name,
-      }));
-    } catch (error) {
-      return [];
-    }
-  }
-
-  static async getSummary(wave: Wave): Promise<Summary> {
-    const rows = await this.loadWaveFeedback(wave);
-    if (rows.length === 0) return EMPTY_SUMMARY;
+    const rows = await prisma.response.findMany({
+      where: {
+        waveId: wave.id,
+        respondedAt: { gte: start, lte: end },
+      },
+      select: { score: true },
+    });
 
     return summarise(rows.map((row) => row.score));
   }

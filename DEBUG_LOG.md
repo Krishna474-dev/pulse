@@ -31,3 +31,33 @@ were corrected together. Grepped `setHours`/`getHours`/`getTimezoneOffset` — n
 alone deliberately: `format.ts` renders dates in the viewer's zone (presentation, not this bug), and
 `ResponseService.record()` stamps `respondedAt: new Date()` regardless of the wave named in the
 event — noted to revisit.
+
+### D2: the headline NPS was calculated from commented responses only
+
+**Symptom:** The dashboard score didn't match a manual count — "close, but not the same"
+(PULSE-101). Northwind Q1 2026 displayed `0` where the real score is `6`, and its response count
+read 391 against 610 in the database.
+
+**How I found it:** The displayed counts (179 of 300, 391 of 610) were exactly each wave's number of
+responses *carrying a comment*, so the headline was clearly reading a subset. Confirmed in SQL by
+computing NPS twice for the same wave, once over all responses and once over commented ones only:
+6.066 versus 0.000 for Northwind, which matches what the screen showed.
+
+**Root cause:** `ResponseService.getSummary()` was built on `loadWaveFeedback()`, the loader written
+for the comments table. That loader filters `verbatim: { not: null }`, which is right for a list of
+comments and wrong for a score: roughly a third of responses are score-only, and discarding them
+changes both the numerator and the denominator of `%promoters − %detractors`.
+
+**Fix:** `getSummary()` now queries the wave's responses directly, selecting only `score` and
+applying no verbatim filter. The comments table keeps its filter, because a comments table should
+show comments.
+
+**How I verified it:** Northwind Q1 2026 moved from `0` to `6`, matching the 6.066 computed in SQL,
+and its count from 391 to 610. Acme Flash Feb 2026 moved from 179 to 300 responses. Both figures
+were predicted from the database before reloading the page.
+
+**Blast radius:** `getSummary()` is used by the brand dashboard and by `BrandService.listWithStats()`
+for the brand list, so both were wrong in the same way and both are fixed. Removing this caller left
+`loadWaveFeedback()` unreachable, so it is deleted — it also wrapped its query in a
+`catch { return [] }`, which would have turned any database error into a silent "no feedback yet"
+rather than a failure anyone could see. Deleting it removes that trap with it.
