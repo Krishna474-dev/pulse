@@ -1,4 +1,4 @@
-import type { Wave } from "@prisma/client";
+import { Prisma, type Wave } from "@prisma/client";
 
 import { getCached, setCached } from "@/lib/cache";
 import { summarise, type Bucket, type Summary } from "@/lib/nps";
@@ -184,26 +184,27 @@ export class ResponseService {
       return false;
     }
 
-    const alreadyRecorded = await prisma.response.findFirst({
-      where: { eventId: event.eventId },
-      select: { id: true },
-    });
+    // De-duplication is enforced by the unique index on eventId: a read-then-write
+    // check loses to a redelivered batch arriving concurrently.
+    try {
+      await prisma.response.create({
+        data: {
+          waveId: wave.id,
+          customerId: customer.id,
+          score: event.score,
+          verbatim: event.text?.trim() ? event.text.trim() : null,
+          eventId: event.eventId,
+          respondedAt: new Date(),
+        },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        console.info("[webhook] duplicate event ignored", { eventId: event.eventId });
+        return false;
+      }
 
-    if (alreadyRecorded) {
-      console.info("[webhook] duplicate event ignored", { eventId: event.eventId });
-      return false;
+      throw error;
     }
-
-    await prisma.response.create({
-      data: {
-        waveId: wave.id,
-        customerId: customer.id,
-        score: event.score,
-        verbatim: event.text?.trim() ? event.text.trim() : null,
-        eventId: event.eventId,
-        respondedAt: new Date(),
-      },
-    });
 
     return true;
   }

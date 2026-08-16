@@ -180,3 +180,34 @@ correct on the first sample, so the response no longer outruns the writes.
 **Blast radius:** Grepped for `forEach` over async work elsewhere. This was the only occurrence; the
 server action and the services all await their writes directly. Worth noting the general shape:
 `forEach` with an `async` callback is always suspicious, because the array method has no way to wait.
+
+### D7: duplicate deliveries were de-duplicated by a check that races
+
+**Symptom:** A redelivered batch produced several copies of the same answer (PULSE-105, second
+complaint).
+
+**How I found it:** `npm run send:responses -- --duplicate` sends one event id five times. The script
+reported `evt_..._dupe stored 5 times`, so the existing duplicate check had let every copy through.
+
+**Root cause:** `ResponseService.record()` asked `findFirst({ where: { eventId } })` and then created
+the row if nothing came back. That is check-then-act: the five events were in flight at once, all
+five queries ran before any insert committed, so all five saw an empty result and all five inserted.
+Nothing in the database prevented it — `eventId` carried no unique constraint, so the only guard was
+application code that cannot see uncommitted work in another transaction.
+
+**Fix:** Made the guarantee the database's job. `eventId` is now `@unique` in the schema, and
+`record()` attempts the insert and treats Prisma's `P2002` unique-violation as "already recorded",
+returning `false` and logging as before. The read-then-write check is gone rather than kept alongside
+it — it saved no work and its presence would imply a safety it never provided. Nulls are unaffected:
+Postgres allows many nulls in a unique index, and in-app responses legitimately have no event id.
+
+**How I verified it:** `--duplicate` now reports `stored 1 of 5`. More importantly I wrote a script
+firing the same event id from **eight concurrent HTTP requests**, since sequential processing inside
+one request would hide a race across requests: all eight returned 200 and the database holds exactly
+one row for that id. That result depends on the constraint, not on ordering.
+
+**Blast radius:** `record()` is the only writer of `eventId`. The same check-then-act shape does not
+appear elsewhere — `addCustomer` already relies on its `@@unique([brandId, phone])` constraint and
+catches `P2002`, which is the pattern this fix now matches. Adding the index required the existing
+data to satisfy it; the duplicate rows left by my earlier reproduction had to be cleared first, which
+`npm run db:reset` did.
