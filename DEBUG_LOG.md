@@ -25,7 +25,7 @@ filters.
 stamped `2026-03-31 23:05`, inside the clipped band. I predicted both numbers before reloading.
 `npm run type-check` passes.
 
-**Blast radius:** `waveWindow()` is the only date→instant conversion in the codebase and feeds both
+**Blast radius:** `waveWindow()` is the only dateâ†’instant conversion in the codebase and feeds both
 `loadWaveFeedback()` and both branches of `listFeedback()`, so the summary, table, counts and search
 were corrected together. Grepped `setHours`/`getHours`/`getTimezoneOffset` — nothing else. Left
 alone deliberately: `format.ts` renders dates in the viewer's zone (presentation, not this bug), and
@@ -46,7 +46,7 @@ computing NPS twice for the same wave, once over all responses and once over com
 **Root cause:** `ResponseService.getSummary()` was built on `loadWaveFeedback()`, the loader written
 for the comments table. That loader filters `verbatim: { not: null }`, which is right for a list of
 comments and wrong for a score: roughly a third of responses are score-only, and discarding them
-changes both the numerator and the denominator of `%promoters − %detractors`.
+changes both the numerator and the denominator of `%promoters âˆ’ %detractors`.
 
 **Fix:** `getSummary()` now queries the wave's responses directly, selecting only `score` and
 applying no verbatim filter. The comments table keeps its filter, because a comments table should
@@ -68,7 +68,7 @@ rather than a failure anyone could see. Deleting it removes that trap with it.
 always toward zero.
 
 **How I found it:** After D2 the arithmetic still disagreed with SQL: Acme Flash Feb 2026 computes to
-−48.667 but displayed −48. Read `summarise()` to see how the float became an integer.
+âˆ’48.667 but displayed âˆ’48. Read `summarise()` to see how the float became an integer.
 
 **Root cause:** `summarise()` produced the integer with `parseInt(String(promoterShare -
 detractorShare), 10)`. `parseInt` reads leading digits off a string and discards the rest, so it
@@ -141,8 +141,8 @@ parses `searchParams` and passes the result down — so a local copy was a secon
 nothing to keep it honest.
 
 **How I verified it:** In the browser from a clean URL: one click on Detractors now gives
-`?bucket=detractors` and all 15 rows score ≤ 6. Switching straight to Promoters gives
-`?bucket=promoters`, all rows ≥ 9, and the correct button highlighted — the third reported symptom.
+`?bucket=detractors` and all 15 rows score â‰¤ 6. Switching straight to Promoters gives
+`?bucket=promoters`, all rows â‰¥ 9, and the correct button highlighted — the third reported symptom.
 
 **Blast radius:** Checked every other client component for the same pattern. `Pagination` and
 `WaveSelect` hold no local state and use their arguments directly. `SearchBox` does keep `useState`,
@@ -150,3 +150,33 @@ but that is a controlled text input where local state is the right thing, and it
 current value — when it navigates, not a stale copy. `FeedbackTable` builds plain links. So the
 defect was confined to this one component, but the pattern that caused it — mirroring URL state in
 `useState` — is worth avoiding everywhere.
+
+### D6: the webhook answered before it had written anything
+
+**Symptom:** The test script reported storing none of what it sent, yet the rows appeared a moment
+later (PULSE-105, first complaint).
+
+**How I found it:** Ran `npm run send:responses`. It printed `200 {"ok":true,"received":5}` and then
+`+0ms stored 0 of 5`, `+300ms stored 0 of 5`, `+1500ms stored 5 of 5`. Nothing was lost — the writes
+simply had not happened yet when the response came back, which points at the handler rather than the
+database.
+
+**Root cause:** The route processed the batch with
+`events.forEach(async (event) => { await ResponseService.record(event); })`. `forEach` calls the
+function and throws away whatever it returns. Marking that function `async` makes it return a
+promise, so `forEach` starts all the writes and discards every handle to them. The route then falls
+straight through to `NextResponse.json(...)`. The `await` inside only suspends the inner function,
+not the handler, so the endpoint reports success for work that is still in flight — and if any of it
+fails, nothing is there to notice.
+
+**Fix:** Replaced `forEach` with `for (const event of events)`, which awaits each write before the
+handler returns. Sequential rather than `Promise.all` was chosen deliberately: the batch is small,
+ordering is preserved, and it keeps one webhook delivery from opening a connection per event. If
+batches grow, a bounded-concurrency map would be the next step.
+
+**How I verified it:** The same script now reports `+0ms stored 5 of 5` — the count is already
+correct on the first sample, so the response no longer outruns the writes.
+
+**Blast radius:** Grepped for `forEach` over async work elsewhere. This was the only occurrence; the
+server action and the services all await their writes directly. Worth noting the general shape:
+`forEach` with an `async` callback is always suspicious, because the array method has no way to wait.
